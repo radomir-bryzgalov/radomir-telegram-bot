@@ -48,7 +48,7 @@ async def handle_message(update: Update, context):
 # Основной код для создания и запуска Telegram-бота
 if __name__ == '__main__':
     # Используй свой Telegram-токен
-    app = ApplicationBuilder().token("7808928669:AAH_nqVRa9H7dfbh6pgrLl-ArSKcEg-ZirQ").build()
+    app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
 
     # Команды и обработчики
     app.add_handler(CommandHandler("start", start))
