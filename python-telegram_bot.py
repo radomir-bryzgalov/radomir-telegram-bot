@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Загрузка переменных из .env файла
 load_dotenv()
 
-#API-ключ OpenAI
+# API-ключ OpenAI
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
 # Определение состояний для ConversationHandler
@@ -183,8 +183,8 @@ def more_menu():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# Обработка ответа пользователя на вопрос о городе
-async def receive_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Обработка ответа пользователя на вопрос о городе при установке часового пояса
+async def receive_city_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     city = update.message.text.strip()
     logger.info(f"Пользователь {user_id} указал город: {city}")
@@ -198,7 +198,7 @@ async def receive_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ Не удалось определить часовой пояс для указанного города. Пожалуйста, попробуйте ещё раз.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Попробовать снова", callback_data='retry_city')]
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data='retry_city_setup')]
             ])
         )
         return ASK_CITY
@@ -241,25 +241,79 @@ async def receive_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return POST_TIMEZONE_SET
 
-# Обработка кнопки "Попробовать снова"
-async def retry_city_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Обработка ответа пользователя на вопрос о городе при изменении часового пояса
+async def receive_city_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    city = update.message.text.strip()
+    logger.info(f"Пользователь {user_id} изменяет город: {city}")
+
+    # Текущее время в UTC для GPT
+    now = datetime.now(pytz.utc)
+    # Получаем часовой пояс через GPT
+    timezone_str = get_timezone_via_gpt(city, now)
+
+    if not timezone_str:
+        await update.message.reply_text(
+            "❌ Не удалось определить часовой пояс для указанного города. Пожалуйста, попробуйте ещё раз.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data='retry_city_change')]
+            ])
+        )
+        return CHANGE_TIMEZONE
+
+    # Сохраняем часовой пояс в user_data
+    previous_timezone = context.user_data.get('timezone')
+    context.user_data['timezone'] = timezone_str
+    logger.info(f"Пользователь {user_id} изменён в часовом поясе: {timezone_str}")
+
+    # Если часовой пояс изменился, обновляем время задач
+    if previous_timezone and previous_timezone != timezone_str:
+        new_timezone = pytz.timezone(timezone_str)
+        old_timezone = pytz.timezone(previous_timezone)
+        tasks = user_tasks.get(user_id, {})
+        for task in tasks.values():
+            # Конвертируем время задачи из старого часового пояса в новый
+            task_time_utc = task['time'].astimezone(pytz.utc)
+            task['time'] = task_time_utc.astimezone(new_timezone)
+            # Пересоздаём напоминание с новым временем
+            current_jobs = context.job_queue.get_jobs_by_name(task['id'])
+            for job in current_jobs:
+                job.schedule_removal()
+            context.job_queue.run_once(
+                send_reminder,
+                when=(task['time'] - datetime.now(new_timezone)).total_seconds(),
+                data={'user_id': user_id, 'task_id': task['id']},
+                name=task['id']
+            )
+        logger.info(f"Время задач пользователя {user_id} обновлено согласно новому часовому поясу.")
+
+    # Подтверждение пользователю и возвращение в главное меню
+    confirmation_message = (
+        f"✅ Часовой пояс успешно изменён на: {timezone_str}.\n"
+        "Вы можете продолжить использовать бота."
+    )
+    await update.message.reply_text(
+        confirmation_message,
+        reply_markup=main_menu()
+    )
+
+    return ConversationHandler.END
+
+# Обработка кнопки "Попробовать снова" для установки часового пояса
+async def retry_city_setup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text("🌍 Пожалуйста, введите название вашего города ещё раз.")
     return ASK_CITY
 
-# Обработка кнопки "Начать сразу"
-async def start_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Обработка кнопки "Попробовать снова" для изменения часового пояса
+async def retry_city_change_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.reply_text(
-        "Вы готовы использовать бота! Добавляйте задачи, и я буду напоминать вам о них.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=main_menu()
-    )
-    return ConversationHandler.END
+    await query.message.reply_text("🌍 Пожалуйста, введите название вашего города ещё раз.")
+    return CHANGE_TIMEZONE
 
-# Обработка нажатий на кнопки меню
+# Обработка кнопок меню
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -318,6 +372,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu()
         )
+        return ConversationHandler.END  # Завершение разговора
 
     elif query.data == 'change_timezone':
         await query.message.reply_text("🌍 В каком городе вы находитесь?")
@@ -423,7 +478,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not task_description or not task_time_str:
         await update.message.reply_text(
-            "❌ Не удалось распознать задачу или время. Пожалуйста, попробуйте еще раз.",
+            "❌ Не удалось распознать задачу или время. Пожалуйста, попробуйте ещё раз.",
             reply_markup=main_menu()
         )
         return
@@ -498,7 +553,7 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
             f"🕒 <b>Время:</b> {task['time'].strftime('%Y-%m-%d %H:%M:%S')}"
         )
         try:
-            await context.telegram_bot.send_message(
+            await context.bot.send_message(
                 chat_id=user_id,
                 text=reminder_message,
                 parse_mode=ParseMode.HTML
@@ -531,6 +586,17 @@ async def start_change_timezone(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text("🌍 В каком городе вы находитесь?")
     return CHANGE_TIMEZONE
 
+# Функция для обработки кнопки "Начать сразу"
+async def start_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Вы готовы использовать бота! Добавляйте задачи, и я буду напоминать вам о них.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=main_menu()
+    )
+    return ConversationHandler.END
+
 # Основной код для создания и запуска Telegram-бота
 if __name__ == '__main__':
     TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -545,8 +611,8 @@ if __name__ == '__main__':
         entry_points=[CommandHandler('start', start)],
         states={
             ASK_CITY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_city),
-                CallbackQueryHandler(retry_city_handler, pattern='^retry_city$')
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_city_setup),
+                CallbackQueryHandler(retry_city_setup_handler, pattern='^retry_city_setup$')
             ],
             POST_TIMEZONE_SET: [
                 CallbackQueryHandler(send_instructions, pattern='^instructions$'),
@@ -561,8 +627,8 @@ if __name__ == '__main__':
         entry_points=[CallbackQueryHandler(start_change_timezone, pattern='^change_timezone$')],
         states={
             CHANGE_TIMEZONE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_city),
-                CallbackQueryHandler(retry_city_handler, pattern='^retry_city$')
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_city_change),
+                CallbackQueryHandler(retry_city_change_handler, pattern='^retry_city_change$')
             ],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
