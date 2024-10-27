@@ -24,7 +24,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
     handlers=[
-        logging.FileHandler("bot.log"),
+        logging.FileHandler("telegram_bot.log"),
         logging.StreamHandler()
     ]
 )
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Загрузка переменных из .env файла
 load_dotenv()
 
-# Устанавливаем API-ключ OpenAI
+#API-ключ OpenAI
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
 # Определение состояний для ConversationHandler
@@ -44,7 +44,7 @@ CHANGE_TIMEZONE = 3
 # Хранилище задач: {user_id: {task_id: {'description': str, 'time': datetime, 'job': Job}}}
 user_tasks = {}
 
-# Функция для общения с GPT через новый API для получения часового пояса
+# Функция для общения с GPT через API для получения часового пояса
 def get_timezone_via_gpt(city, current_time):
     try:
         system_message = {
@@ -71,7 +71,6 @@ def get_timezone_via_gpt(city, current_time):
         content = response['choices'][0]['message']['content'].strip()
         logger.info(f"GPT ответ на запрос часового пояса для города '{city}': '{content}'")
 
-        # Убираем возможные кавычки и лишние символы
         timezone = content.strip('"').strip("'").strip()
 
         # Проверяем, что часовой пояс валиден
@@ -84,7 +83,7 @@ def get_timezone_via_gpt(city, current_time):
         logger.error(f"Ошибка при получении часового пояса через GPT: {e}")
         return None
 
-# Функция для общения с GPT через новый API для извлечения задачи и времени
+# Функция для общения с GPT через API для извлечения задачи и времени
 def extract_task_and_time(prompt, current_time):
     try:
         system_message = {
@@ -136,7 +135,7 @@ async def send_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu()
     )
 
-# Стартовая команда для бота
+# Стартовая команда бота
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data = context.user_data
@@ -242,14 +241,14 @@ async def receive_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return POST_TIMEZONE_SET
 
-# Обработка нажатия кнопки "Попробовать снова"
+# Обработка кнопки "Попробовать снова"
 async def retry_city_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text("🌍 Пожалуйста, введите название вашего города ещё раз.")
     return ASK_CITY
 
-# Обработка нажатия кнопки "Начать сразу"
+# Обработка кнопки "Начать сразу"
 async def start_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -499,7 +498,7 @@ async def send_reminder(context: ContextTypes.DEFAULT_TYPE):
             f"🕒 <b>Время:</b> {task['time'].strftime('%Y-%m-%d %H:%M:%S')}"
         )
         try:
-            await context.bot.send_message(
+            await context.telegram_bot.send_message(
                 chat_id=user_id,
                 text=reminder_message,
                 parse_mode=ParseMode.HTML
@@ -574,7 +573,7 @@ if __name__ == '__main__':
     application.add_handler(conv_handler_change_timezone)
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CommandHandler('cancel', cancel))  # Обработчик команды /cancel
+    application.add_handler(CommandHandler('cancel', cancel))
 
     # Запуск бота
     logger.info("🚀 Бот запущен...")
